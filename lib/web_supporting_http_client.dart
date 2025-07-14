@@ -11,14 +11,16 @@ typedef OnHttpClientCreateCallback = void Function(Client httpClient);
 class WebSupportingHttpClient extends SignalRHttpClient {
   // Properties
 
+  final Client? _client;
   final Logger? _logger;
   final OnHttpClientCreateCallback? _httpClientCreateCallback;
 
   // Methods
 
-  WebSupportingHttpClient(Logger? logger,
+  WebSupportingHttpClient(Client? httpClient, Logger? logger,
       {OnHttpClientCreateCallback? httpClientCreateCallback})
-      : this._logger = logger,
+      : this._client = httpClient ?? Client(),
+        this._logger = logger,
         this._httpClientCreateCallback = httpClientCreateCallback;
 
   Future<SignalRHttpResponse> send(SignalRHttpRequest request) {
@@ -38,9 +40,8 @@ class WebSupportingHttpClient extends SignalRHttpClient {
     return Future<SignalRHttpResponse>(() async {
       final uri = Uri.parse(request.url!);
 
-      final httpClient = Client();
-      if (_httpClientCreateCallback != null) {
-        _httpClientCreateCallback!(httpClient);
+      if (_httpClientCreateCallback != null && _client != null) {
+        _httpClientCreateCallback!(_client!);
       }
 
       final abortFuture = Future<void>(() {
@@ -68,13 +69,45 @@ class WebSupportingHttpClient extends SignalRHttpClient {
 
       headers.addMessageHeaders(request.headers);
 
+      // Safely log content length without assuming type
+      String contentLength = 'unknown';
+      if (request.content is String) {
+        contentLength = (request.content as String).length.toString();
+      }
+      
       _logger?.finest(
-          "HTTP send: url '${request.url}', method: '${request.method}' content: '${request.content}' content length = '${(request.content as String).length}' headers: '$headers'");
+          "HTTP send: url '${request.url}', method: '${request.method}' content: '${request.content}' content length = '$contentLength' headers: '$headers'");
 
       try {
-        final httpRespFuture = await Future.any(
-            [_sendHttpRequest(httpClient, request, uri, headers), abortFuture]);
-        final httpResp = httpRespFuture as Response;
+        if (_client == null) {
+          throw ArgumentError("HTTP client is not initialized");
+        }
+        
+        // Handle HTTP request and possible abort
+        Response httpResp;
+        try {
+          // Create list of futures to race
+          final List<Future<dynamic>> futures = [
+            _sendHttpRequest(_client!, request, uri, headers),
+            abortFuture
+          ];
+          
+          // Wait for the first future to complete
+          final index = await Future.any(
+              futures.map((f) => f.then((value) => futures.indexOf(f))));
+              
+          // If abortFuture won the race
+          if (index == 1) {
+            throw AbortError();
+          }
+          
+          // Otherwise get the HTTP response
+          httpResp = await futures[0] as Response;
+        } catch (abortError) {
+          // If abortFuture completes with an error, rethrow it
+          _logger?.info("Request aborted: ${abortError.toString()}");
+          throw AbortError();
+        }
 
         if (request.abortSignal != null) {
           request.abortSignal!.onabort = null;
@@ -102,11 +135,19 @@ class WebSupportingHttpClient extends SignalRHttpClient {
           throw HttpError(httpResp.reasonPhrase, httpResp.statusCode);
         }
       } catch (e) {
+        _logger?.warning("HTTP request error: ${e.toString()}");
         return Future.error(e);
       }
     });
   }
 
+  /// Sends an HTTP request using the provided client
+  /// 
+  /// @param httpClient The HTTP client to use
+  /// @param request The SignalR HTTP request details
+  /// @param uri The parsed URI
+  /// @param headers The headers to include in the request
+  /// @return A Future that resolves with the HTTP Response
   Future<Response> _sendHttpRequest(
     Client httpClient,
     SignalRHttpRequest request,
@@ -115,7 +156,10 @@ class WebSupportingHttpClient extends SignalRHttpClient {
   ) {
     Future<Response> httpResponse;
 
-    switch (request.method!.toLowerCase()) {
+    // Handle null method safely
+    String method = (request.method ?? "").toLowerCase();
+    
+    switch (method) {
       case 'post':
         httpResponse =
             httpClient.post(uri, body: request.content, headers: headers.asMap);
@@ -133,10 +177,14 @@ class WebSupportingHttpClient extends SignalRHttpClient {
         httpResponse = httpClient.get(uri, headers: headers.asMap);
     }
 
+    // Apply timeout if specified
     final hasTimeout = (request.timeout != null) && (0 < request.timeout!);
     if (hasTimeout) {
       httpResponse =
-          httpResponse.timeout(Duration(milliseconds: request.timeout!));
+          httpResponse.timeout(
+            Duration(milliseconds: request.timeout!),
+            onTimeout: () => throw TimeoutError("Request timed out after ${request.timeout}ms")
+          );
     }
 
     return httpResponse;
