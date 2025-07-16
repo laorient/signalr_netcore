@@ -16,7 +16,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  netcore_signalr:
+  signalr_netcore::
     path: ../
 
   # The following adds the Cupertino Icons font to your application.
