@@ -19,6 +19,7 @@ class WebSocketTransport implements ITransport {
   bool _logMessageContent;
   WebSocketChannel? _webSocket;
   StreamSubscription<Object?>? _webSocketListenSub;
+  HttpClient? _customHttpClient;
 
   @override
   OnClose? onClose;
@@ -28,10 +29,11 @@ class WebSocketTransport implements ITransport {
 
   // Methods
   WebSocketTransport(AccessTokenFactory? accessTokenFactory, Logger? logger,
-      bool logMessageContent)
+      bool logMessageContent, {HttpClient? customHttpClient})
       : this._accessTokenFactory = accessTokenFactory,
         this._logger = logger,
-        this._logMessageContent = logMessageContent;
+        this._logMessageContent = logMessageContent,
+        this._customHttpClient = customHttpClient;
 
   @override
   Future<void> connect(String? url, TransferFormat transferFormat) async {
@@ -54,15 +56,9 @@ class WebSocketTransport implements ITransport {
     url = url!.replaceFirst('http', 'ws');
     _logger?.finest("WebSocket try connecting to '$url'.");
     
-    // Create WebSocket with SSL bypass for development
-    if (kDebugMode && !kIsWeb) {
-      final httpClient = HttpClient();
-      httpClient.badCertificateCallback = 
-          (X509Certificate cert, String host, int port) {
-        _logger?.warning('Skipping SSL certificate validation for WebSocket $host:$port in development mode');
-        return true;
-      };
-      _webSocket = IOWebSocketChannel.connect(Uri.parse(url), customClient: httpClient);
+    // Create WebSocket with custom HttpClient if provided, otherwise use default
+    if (!kIsWeb && _customHttpClient != null) {
+      _webSocket = IOWebSocketChannel.connect(Uri.parse(url), customClient: _customHttpClient);
     } else {
       _webSocket = WebSocketChannel.connect(Uri.parse(url));
     }

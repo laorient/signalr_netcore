@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:logging/logging.dart';
 
 import 'ihub_protocol.dart';
@@ -42,6 +43,10 @@ class HttpConnectionOptions {
   /// An int that reflects the time to wait for a request to complete before throwing a TimeoutError. Measured in milliseconds.
   int requestTimeout;
 
+  /// A custom HttpClient to use for WebSocket connections.
+  /// This allows for SSL certificate bypass and other customizations.
+  HttpClient? customWebSocketHttpClient;
+
   // Methods
   HttpConnectionOptions(
       {SignalRHttpClient? httpClient,
@@ -51,7 +56,8 @@ class HttpConnectionOptions {
       MessageHeaders? headers,
       bool logMessageContent = false,
       bool skipNegotiation = false,
-      int requestTimeout = 2000})
+      int requestTimeout = 2000,
+      HttpClient? customWebSocketHttpClient})
       : this.httpClient = httpClient,
         this.transport = transport,
         this.logger = logger,
@@ -59,5 +65,6 @@ class HttpConnectionOptions {
         this.headers = headers,
         this.logMessageContent = logMessageContent,
         this.skipNegotiation = skipNegotiation,
-        this.requestTimeout = requestTimeout;
+        this.requestTimeout = requestTimeout,
+        this.customWebSocketHttpClient = customWebSocketHttpClient;
 }
