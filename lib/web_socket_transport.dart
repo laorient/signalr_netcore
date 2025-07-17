@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:logging/logging.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 
 import 'errors.dart';
 import 'itransport.dart';
@@ -50,7 +53,19 @@ class WebSocketTransport implements ITransport {
     var opened = false;
     url = url!.replaceFirst('http', 'ws');
     _logger?.finest("WebSocket try connecting to '$url'.");
-    _webSocket = WebSocketChannel.connect(Uri.parse(url));
+    
+    // Create WebSocket with SSL bypass for development
+    if (kDebugMode && !kIsWeb) {
+      final httpClient = HttpClient();
+      httpClient.badCertificateCallback = 
+          (X509Certificate cert, String host, int port) {
+        _logger?.warning('Skipping SSL certificate validation for WebSocket $host:$port in development mode');
+        return true;
+      };
+      _webSocket = IOWebSocketChannel.connect(Uri.parse(url), customClient: httpClient);
+    } else {
+      _webSocket = WebSocketChannel.connect(Uri.parse(url));
+    }
     opened = true;
     if (!websocketCompleter.isCompleted) websocketCompleter.complete();
     _logger?.info("WebSocket connected to '$url'.");
